@@ -1,0 +1,9 @@
+{
+  "appId": "dev.bodao.bottons",
+  "appName": "Bottons do Lucas",
+  "webDir": "dist-app",
+  "backgroundColor": "#0f0d0cff",
+  "android": {
+    "backgroundColor": "#0f0d0cff"
+  }
+}

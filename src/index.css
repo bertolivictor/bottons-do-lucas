@@ -1,0 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { background: #0f0d0c; }
+body { margin: 0; }
+* { font-family: 'Inter', sans-serif; }
+input { color-scheme: dark; }
+input:focus-visible, button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid #f97316; outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

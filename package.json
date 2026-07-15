@@ -1,0 +1,37 @@
+{
+  "name": "bottons-do-lucas",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Sistema de custo, precos e vendas dos Bottons do Lucas.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:app": "vite build --mode capacitor --outDir dist-app",
+    "preview": "vite preview",
+    "deploy": "npm run build && gh-pages -d dist",
+    "android:sync": "npm run build:app && npx cap sync android",
+    "android:open": "npm run android:sync && npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/filesystem": "^6.0.1",
+    "@capacitor/share": "^6.0.2",
+    "lucide-react": "^0.383.0",
+    "jspdf": "^2.5.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "gh-pages": "^6.1.1",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "vite": "^5.3.1",
+    "vite-plugin-pwa": "^0.20.0"
+  }
+}

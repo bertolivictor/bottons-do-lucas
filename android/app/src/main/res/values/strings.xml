@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Bottons do Lucas</string>
+    <string name="title_activity_main">Bottons do Lucas</string>
+    <string name="package_name">dev.bodao.bottons</string>
+    <string name="custom_url_scheme">dev.bodao.bottons</string>
+</resources>

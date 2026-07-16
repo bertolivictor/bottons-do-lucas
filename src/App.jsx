@@ -36,7 +36,7 @@ const faixaDe = (p) => FAIXAS.find((f) => p <= f.max) || FAIXAS[FAIXAS.length - 
 
 function taxaShopee(valor, g) {
   const f = faixaDe(valor);
-  const com = f.com + (g.shopeeCampanha ? 0.025 : 0);
+  const com = f.com;
   const fixa = f.fixa + (g.shopeeCPFAlto ? 3 : 0);
   return { com, fixa, faixa: f, taxa: valor * com + fixa };
 }
@@ -61,10 +61,11 @@ function precosProduto(prod, itens, g) {
   const atacado = custo * (1 + prod.margemAtacado / 100);
   const precoShopee = custo * (1 + prod.margemShopee / 100);
   const tx = taxaShopee(precoShopee, g);
-  const ganho = precoShopee - tx.taxa; // preço final − 20% − R$4
+  const dev = g.shopeeDevolucaoFacil ? 0.49 : 0;
+  const ganho = precoShopee - tx.taxa - dev; // preço final − comissão − taxa fixa − devolução fácil
   return {
     item, custo, base, mult, normal, atacado,
-    shopee: { preco: precoShopee, taxa: tx.taxa, faixa: tx.faixa, ganho, lucro: ganho - custo },
+    shopee: { preco: precoShopee, taxa: tx.taxa, dev, faixa: tx.faixa, ganho, lucro: ganho - custo },
   };
 }
 
@@ -73,7 +74,7 @@ const DEFAULT = {
   global: {
     papelFolhas: 50, papelValor: 30,
     tintaValor: 155, tintaRendimento: 7500,
-    shopeeCampanha: false, shopeeCPFAlto: false,
+    shopeeCPFAlto: false, shopeeDevolucaoFacil: false,
     tags: [],
     custos: [],
   },
@@ -104,7 +105,7 @@ function migrarV3(old) {
     global: {
       papelFolhas: g.papelFolhas ?? 50, papelValor: g.papelValor ?? 30,
       tintaValor: g.tintaValor ?? 155, tintaRendimento: g.tintaRendimento ?? 7500,
-      shopeeCampanha: !!g.shopeeCampanha, shopeeCPFAlto: !!g.shopeeCPFAlto,
+      shopeeCPFAlto: !!g.shopeeCPFAlto, shopeeDevolucaoFacil: !!g.shopeeDevolucaoFacil,
     },
     itens: itens.length ? itens : DEFAULT.itens,
     produtos, vendas: old.vendas || [],
@@ -449,7 +450,7 @@ function ProdutosTab({ data, g, setG, updProd, addProd, delProd }) {
       <Card className="p-3">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <span className="text-[11px] text-stone-400 font-semibold flex items-center gap-1"><Store size={12} />Shopee (afeta todos):</span>
-          <label className="flex items-center gap-2 text-xs text-stone-400 cursor-pointer"><input type="checkbox" checked={g.shopeeCampanha} onChange={(e) => setG({ ...g, shopeeCampanha: e.target.checked })} className="accent-orange-500" />Campanha de destaque (+2,5%)</label>
+          <label className="flex items-center gap-2 text-xs text-stone-400 cursor-pointer"><input type="checkbox" checked={g.shopeeDevolucaoFacil} onChange={(e) => setG({ ...g, shopeeDevolucaoFacil: e.target.checked })} className="accent-orange-500" />Devolução Fácil (+R$0,49/pedido)</label>
           <label className="flex items-center gap-2 text-xs text-stone-400 cursor-pointer"><input type="checkbox" checked={g.shopeeCPFAlto} onChange={(e) => setG({ ...g, shopeeCPFAlto: e.target.checked })} className="accent-orange-500" />CPF +450 pedidos/90d (+R$3/item)</label>
         </div>
       </Card>
@@ -523,11 +524,13 @@ function VendasTab({ data, g, setData }) {
     const qtd = Math.max(1, form.qtd || 1);
     const receita = precoUn * qtd;
     const tx = form.canal === "shopee" ? taxaShopee(precoUn, g) : null;
-    const taxa = tx ? tx.taxa * qtd : 0;
+    const taxaItens = tx ? tx.taxa * qtd : 0;
+    const dev = tx && g.shopeeDevolucaoFacil ? 0.49 : 0;
+    const taxa = taxaItens + dev;
     const extra = Math.max(0, form.custoExtra || 0);
     const extraNome = (form.custoExtraNome || "").trim();
     const receitaLiq = receita - taxa - extra;
-    return { precoUn, custoUn, qtd, receita, custoTotal: custoUn * qtd, taxa, txCom: tx ? tx.com : 0, txFixa: tx ? tx.fixa : 0, extra, extraNome, receitaLiq, lucro: receitaLiq - custoUn * qtd, tier };
+    return { precoUn, custoUn, qtd, receita, custoTotal: custoUn * qtd, taxa, taxaItens, dev, txCom: tx ? tx.com : 0, txFixa: tx ? tx.fixa : 0, extra, extraNome, receitaLiq, lucro: receitaLiq - custoUn * qtd, tier };
   }, [prod, form, g, data.itens]);
 
   function registrar() {
@@ -638,8 +641,11 @@ function VendasTab({ data, g, setData }) {
                 {preview.qtd > 1 && (<>
                   <div className="text-stone-400">Subtotal ({preview.qtd}×)</div><div className="text-right"><Mono className="text-stone-100">{brl(preview.receita)}</Mono></div>
                 </>)}
-                {preview.taxa > 0 && (<>
-                  <div className="text-stone-400">Taxa Shopee ({Math.round(preview.txCom * 100)}% + {brl(preview.txFixa)}{preview.qtd > 1 ? ` ×${preview.qtd}` : ""})</div><div className="text-right"><Mono className="text-rose-400">−{brl(preview.taxa)}</Mono></div>
+                {preview.taxaItens > 0 && (<>
+                  <div className="text-stone-400">Taxa Shopee ({Math.round(preview.txCom * 100)}% + {brl(preview.txFixa)}{preview.qtd > 1 ? ` ×${preview.qtd}` : ""})</div><div className="text-right"><Mono className="text-rose-400">−{brl(preview.taxaItens)}</Mono></div>
+                </>)}
+                {preview.dev > 0 && (<>
+                  <div className="text-stone-400">Devolução Fácil (por pedido)</div><div className="text-right"><Mono className="text-rose-400">−{brl(preview.dev)}</Mono></div>
                 </>)}
                 {preview.extra > 0 && (<>
                   <div className="text-stone-400 truncate">{preview.extraNome || "Custo extra"}</div><div className="text-right"><Mono className="text-rose-400">−{brl(preview.extra)}</Mono></div>

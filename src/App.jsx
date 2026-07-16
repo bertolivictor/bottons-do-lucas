@@ -2,11 +2,12 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   User, Handshake, Store, Plus, Trash2, Package, Calculator,
   Receipt, Percent, Droplet, TrendingUp, TrendingDown, Wallet, ShoppingBag, Tag, Link2, Layers,
-  FileText, Download, Filter, ChevronDown, Image as ImageIcon, Save, Upload,
+  FileText, Download, Filter, ChevronDown, Image as ImageIcon, Save, Upload, X, Calendar, FileSpreadsheet,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from "recharts";
+import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import { storage } from "./storage.js";
 import { Capacitor } from "@capacitor/core";
@@ -76,18 +77,8 @@ const DEFAULT = {
     tags: [],
     custos: [],
   },
-  itens: [
-    { id: "i_b32", nome: "Botton 32mm", cor: "#F97316", matQtd: 0, matValor: 0, bpf: 28 },
-    { id: "i_b44", nome: "Botton 44mm", cor: "#F43F5E", matQtd: 100, matValor: 80, bpf: 18 },
-    { id: "i_b58", nome: "Botton 58mm", cor: "#8B5CF6", matQtd: 0, matValor: 0, bpf: 11 },
-    { id: "i_ch44", nome: "Chaveiro botton 44mm", cor: "#06B6D4", matQtd: 0, matValor: 0, bpf: 18 },
-    { id: "i_ab44", nome: "Chaveiro abridor 44mm", cor: "#EAB308", matQtd: 0, matValor: 0, bpf: 18 },
-    { id: "i_es58", nome: "Espelho botton 58mm", cor: "#10B981", matQtd: 0, matValor: 0, bpf: 11 },
-  ],
-  produtos: [
-    { id: "p_b44", nome: "Botton 44mm", itemId: "i_b44", tipo: "unidade", qtd: 1, vendeAtacado: true, margemNormal: 60, margemAtacado: 35, margemShopee: 30 },
-    { id: "p_k44", nome: "Kit 10 bottons 44mm", itemId: "i_b44", tipo: "kit", qtd: 10, vendeAtacado: true, margemNormal: 55, margemAtacado: 35, margemShopee: 30 },
-  ],
+  itens: [] /*SEED_ITENS*/,
+  produtos: [] /*SEED_PRODUTOS*/,
   vendas: [],
   despesas: [],
 };
@@ -513,7 +504,7 @@ function rotuloFiltro(f) {
 
 function VendasTab({ data, g, setData }) {
   const anoAtual = new Date().getFullYear();
-  const [form, setForm] = useState({ produtoId: data.produtos[0]?.id || "", canal: "presencial", tier: "normal", qtd: 1, tema: "", custoExtraNome: "", custoExtra: 0, obs: "" });
+  const [form, setForm] = useState({ produtoId: data.produtos[0]?.id || "", canal: "presencial", tier: "normal", qtd: 1, tema: "", custoExtraNome: "", custoExtra: 0, hoje: true, data: toYMD(new Date()), obs: "" });
   const [filtro, setFiltro] = useState({ modo: "tudo", ano: anoAtual, mes: "", dia: "", de: "", ate: "" });
   const prod = data.produtos.find((p) => p.id === form.produtoId);
   const tags = data.global.tags || [];
@@ -549,7 +540,7 @@ function VendasTab({ data, g, setData }) {
       canal: form.canal, tier: preview.tier, qtd: preview.qtd, tema,
       precoUnit: preview.precoUn, custoUnit: preview.custoUn,
       receita: preview.receita, taxa: preview.taxa, custoExtra: preview.extra, custoExtraNome: preview.extraNome, receitaLiq: preview.receitaLiq, lucro: preview.lucro,
-      data: new Date().toISOString(), obs: form.obs.trim(),
+      data: form.hoje ? new Date().toISOString() : new Date((form.data || toYMD(new Date())) + "T12:00:00").toISOString(), obs: form.obs.trim(),
     };
     setData((d) => {
       const cur = d.global.tags || [];
@@ -560,6 +551,10 @@ function VendasTab({ data, g, setData }) {
   }
 
   const excluir = (id) => setData((d) => ({ ...d, vendas: d.vendas.filter((v) => v.id !== id) }));
+  const removerTema = (t) => {
+    setData((d) => ({ ...d, global: { ...d.global, tags: (d.global.tags || []).filter((x) => x !== t) } }));
+    setForm((f) => (f.tema === t ? { ...f, tema: "" } : f));
+  };
   const vendasFiltradas = useMemo(() => data.vendas.filter((v) => noFiltro(v.data, filtro)), [data.vendas, filtro]);
   const anos = useMemo(() => {
     const s = new Set(data.vendas.map((v) => new Date(v.data).getFullYear()));
@@ -592,9 +587,11 @@ function VendasTab({ data, g, setData }) {
               <datalist id="lista-temas">{tags.map((t) => <option key={t} value={t} />)}</datalist>
               {tags.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-1.5">
-                  {tags.slice(0, 12).map((t) => (
-                    <button key={t} type="button" onClick={() => setForm((f) => ({ ...f, tema: t }))}
-                      className={`text-[10px] rounded px-1.5 py-0.5 border transition-colors ${form.tema === t ? "bg-orange-500 border-orange-500 text-white" : "border-stone-700 text-stone-400 hover:text-stone-200"}`}>{t}</button>
+                  {tags.map((t) => (
+                    <span key={t} className={`inline-flex items-center rounded border text-[10px] transition-colors ${form.tema === t ? "bg-orange-500 border-orange-500 text-white" : "border-stone-700 text-stone-400"}`}>
+                      <button type="button" onClick={() => setForm((f) => ({ ...f, tema: t }))} className="pl-1.5 pr-1 py-0.5 hover:opacity-80">{t}</button>
+                      <button type="button" onClick={() => removerTema(t)} title="Remover tema" className={`pr-1 py-0.5 ${form.tema === t ? "text-white/70 hover:text-white" : "text-stone-600 hover:text-rose-400"}`}><X size={10} /></button>
+                    </span>
                   ))}
                 </div>
               )}
@@ -606,6 +603,19 @@ function VendasTab({ data, g, setData }) {
             {form.canal === "presencial" && prod?.vendeAtacado && (
               <label className="block"><span className="text-[11px] text-stone-400">Preço</span><div className="mt-1"><Seg options={[{ v: "normal", label: "Normal" }, { v: "atacado", label: "Atacado" }]} value={form.tier} onChange={(v) => setForm((f) => ({ ...f, tier: v }))} /></div></label>
             )}
+            <label className="block">
+              <span className="text-[11px] text-stone-400">Data da venda</span>
+              <div className="mt-1 flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-1.5 text-sm text-stone-300 cursor-pointer select-none">
+                  <input type="checkbox" checked={form.hoje} onChange={(e) => setForm((f) => ({ ...f, hoje: e.target.checked, data: e.target.checked ? toYMD(new Date()) : f.data }))} className="accent-orange-500 w-4 h-4" />
+                  Hoje
+                </label>
+                {!form.hoje && (
+                  <input type="date" value={form.data} onChange={(e) => setForm((f) => ({ ...f, data: e.target.value }))}
+                    className="bg-stone-800 border border-stone-700 rounded-lg px-2.5 py-1.5 text-stone-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500/60" />
+                )}
+              </div>
+            </label>
             <div className="grid grid-cols-[1fr_110px] gap-3">
               <label className="block">
                 <span className="text-[11px] text-stone-400">Custo extra (opcional)</span>
@@ -1589,7 +1599,7 @@ function RelatoriosTab({ data, g, setData }) {
 /* ---------- APP ---------- */
 function DespesasTab({ data, setData }) {
   const CATS = ["Embalagem", "Envelope de postagem", "Fita adesiva", "Insumos", "Etiquetas", "Frete", "Outros"];
-  const [form, setForm] = useState({ categoria: "", valor: 0, qtd: 1, data: toYMD(new Date()), obs: "" });
+  const [form, setForm] = useState({ categoria: "", valor: 0, qtd: 1, hoje: true, data: toYMD(new Date()), obs: "" });
   const [per, setPer] = useState("mes");
 
   const inPer = (iso) => {
@@ -1602,7 +1612,7 @@ function DespesasTab({ data, setData }) {
   function registrar() {
     const cat = form.categoria.trim();
     if (!cat || !(form.valor > 0)) return;
-    const iso = new Date((form.data || toYMD(new Date())) + "T12:00:00").toISOString();
+    const iso = form.hoje ? new Date().toISOString() : new Date((form.data || toYMD(new Date())) + "T12:00:00").toISOString();
     const q = Math.max(1, Math.round(form.qtd || 1));
     const e = { id: Date.now().toString(), categoria: cat, valor: form.valor, qtd: q, data: iso, obs: form.obs.trim() };
     setData((d) => ({ ...d, despesas: [e, ...(d.despesas || [])] }));
@@ -1650,7 +1660,18 @@ function DespesasTab({ data, setData }) {
         {form.qtd > 1 && form.valor > 0 && (
           <p className="text-[11px] text-stone-400 bg-black/20 rounded-lg px-2.5 py-1.5">Custo unitário: <Mono className="text-stone-200">{brl(form.valor / form.qtd)}</Mono> <span className="text-stone-500">· {form.qtd} un</span></p>
         )}
-        <label className="block"><span className="text-[11px] text-stone-400">Data</span><input type="date" value={form.data} onChange={(e) => setForm((f) => ({ ...f, data: e.target.value }))} className={`mt-1 w-full ${dateInput}`} /></label>
+        <label className="block">
+          <span className="text-[11px] text-stone-400">Data</span>
+          <div className="mt-1 flex items-center gap-3 flex-wrap">
+            <label className="flex items-center gap-1.5 text-sm text-stone-300 cursor-pointer select-none">
+              <input type="checkbox" checked={form.hoje} onChange={(e) => setForm((f) => ({ ...f, hoje: e.target.checked, data: e.target.checked ? toYMD(new Date()) : f.data }))} className="accent-orange-500 w-4 h-4" />
+              Hoje
+            </label>
+            {!form.hoje && (
+              <input type="date" value={form.data} onChange={(e) => setForm((f) => ({ ...f, data: e.target.value }))} className={dateInput} />
+            )}
+          </div>
+        </label>
         <label className="block">
           <span className="text-[11px] text-stone-400">Descrição (opcional)</span>
           <input value={form.obs} onChange={(e) => setForm((f) => ({ ...f, obs: e.target.value }))} placeholder="ex: 100 saquinhos, rolo de fita..."
@@ -1722,6 +1743,188 @@ function DespesasTab({ data, setData }) {
   );
 }
 
+/* ---------- ABA SHOPEE (alteração em massa) ---------- */
+function ShopeeTab({ data, g }) {
+  const [fileName, setFileName] = useState("");
+  const [wb, setWb] = useState(null);
+  const [grupos, setGrupos] = useState([]);
+  const [erro, setErro] = useState("");
+  const [okMsg, setOkMsg] = useState("");
+  const [gerando, setGerando] = useState(false);
+
+  const produtos = data.produtos;
+  const precoDe = (pid) => {
+    const p = produtos.find((x) => x.id === pid);
+    if (!p) return null;
+    return precosProduto(p, data.itens, g).shopee.preco;
+  };
+
+  const detectarTipo = (nome) => {
+    const n = (nome || "").toLowerCase();
+    if (n.includes("abridor")) return { tipo: "chaveiro_abridor", label: "Chaveiro abridor de garrafas" };
+    if (n.includes("chaveiro")) return { tipo: "chaveiro_botton", label: "Chaveiro botton" };
+    if (n.includes("espelho")) return { tipo: "espelho", label: "Espelho" };
+    if (/kit\s*10/.test(n)) return { tipo: "kit10", label: "Kit 10 bottons" };
+    if (/kit\s*5/.test(n)) return { tipo: "kit5", label: "Kit 5 bottons" };
+    if (/kit\s*3/.test(n)) return { tipo: "kit3", label: "Kit 3 bottons" };
+    return { tipo: "avulso", label: "Botton avulso" };
+  };
+
+  const palpiteProduto = (tipo) => {
+    const has = (p, s) => (p.nome || "").toLowerCase().includes(s);
+    const uni = (p) => p.tipo === "unidade";
+    let f = null;
+    if (tipo === "chaveiro_abridor") f = produtos.find((p) => has(p, "abridor"));
+    else if (tipo === "chaveiro_botton") f = produtos.find((p) => has(p, "chaveiro") && !has(p, "abridor"));
+    else if (tipo === "espelho") f = produtos.find((p) => has(p, "espelho"));
+    else if (tipo === "kit10") f = produtos.find((p) => p.tipo === "kit" && (p.qtd || 0) === 10);
+    else if (tipo === "kit5") f = produtos.find((p) => p.tipo === "kit" && (p.qtd || 0) === 5);
+    else if (tipo === "kit3") f = produtos.find((p) => p.tipo === "kit" && (p.qtd || 0) === 3);
+    else if (tipo === "avulso") f = produtos.find((p) => uni(p) && (has(p, "botton") || has(p, "boton")) && !has(p, "chaveiro") && !has(p, "abridor") && !has(p, "espelho")) || produtos.find((p) => uni(p));
+    return f ? f.id : "";
+  };
+
+  const fmtPreco = (n) => (n != null && isFinite(n) ? Number(n).toFixed(2) : "");
+
+  async function carregar(file) {
+    setErro(""); setOkMsg(""); setGrupos([]); setWb(null); setFileName("");
+    try {
+      const buf = await file.arrayBuffer();
+      const workbook = XLSX.read(buf, { type: "array" });
+      const ws = workbook.Sheets[workbook.SheetNames[0]];
+      if (!ws || !ws["!ref"]) throw new Error("planilha vazia");
+      const a1 = ws["A1"] ? String(ws["A1"].v || "") : "";
+      if (a1.indexOf("et_title") !== 0) throw new Error("não parece a planilha de alteração em massa da Shopee");
+      const range = XLSX.utils.decode_range(ws["!ref"]);
+      const getv = (r0, c) => { const cc = ws[XLSX.utils.encode_cell({ r: r0, c })]; return cc == null ? "" : cc.v; };
+      const byTipo = {};
+      for (let r0 = 6; r0 <= range.e.r; r0++) {
+        const pid = getv(r0, 0);
+        if (pid === "" || pid == null) continue;
+        const nome = String(getv(r0, 1) || "");
+        const preco = getv(r0, 6);
+        const det = detectarTipo(nome);
+        if (!byTipo[det.tipo]) byTipo[det.tipo] = { tipo: det.tipo, label: det.label, rows: [], listings: new Set(), precos: {}, exemplo: nome };
+        const grp = byTipo[det.tipo];
+        grp.rows.push(r0);
+        grp.listings.add(pid);
+        const pk = String(preco);
+        grp.precos[pk] = (grp.precos[pk] || 0) + 1;
+      }
+      const ordem = ["avulso", "kit3", "kit5", "kit10", "chaveiro_botton", "chaveiro_abridor", "espelho"];
+      const gs = Object.values(byTipo).sort((a, b) => (ordem.indexOf(a.tipo) - ordem.indexOf(b.tipo)));
+      if (!gs.length) throw new Error("nenhum anúncio encontrado (os dados começam na linha 7)");
+      const gruposIni = gs.map((grp) => {
+        const precoAtual = Object.entries(grp.precos).sort((a, b) => b[1] - a[1])[0][0];
+        const pid = palpiteProduto(grp.tipo);
+        return {
+          tipo: grp.tipo, label: grp.label, nAnuncios: grp.listings.size, nRows: grp.rows.length,
+          rows: grp.rows, precoAtual, exemplo: grp.exemplo,
+          produtoId: pid, preco: pid ? fmtPreco(precoDe(pid)) : "", estoque: "",
+        };
+      });
+      setWb(workbook); setFileName(file.name); setGrupos(gruposIni);
+    } catch (e) {
+      setErro("Não consegui ler o arquivo: " + (e && e.message ? e.message : "erro") + ".");
+    }
+  }
+
+  const setProduto = (i, pid) => setGrupos((gs) => gs.map((x, j) => (j === i ? { ...x, produtoId: pid, preco: pid ? fmtPreco(precoDe(pid)) : "" } : x)));
+  const setPreco = (i, v) => setGrupos((gs) => gs.map((x, j) => (j === i ? { ...x, preco: v } : x)));
+  const setEstoque = (i, v) => setGrupos((gs) => gs.map((x, j) => (j === i ? { ...x, estoque: v } : x)));
+
+  const limpar = () => { setWb(null); setGrupos([]); setFileName(""); setErro(""); setOkMsg(""); };
+
+  async function gerar() {
+    setErro(""); setOkMsg(""); setGerando(true);
+    try {
+      if (!wb) throw new Error("suba um arquivo primeiro");
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      let mudou = 0;
+      grupos.forEach((grp) => {
+        const precoNum = parseFloat(String(grp.preco).replace(",", "."));
+        const precoTxt = !isNaN(precoNum) && precoNum > 0 ? precoNum.toFixed(2) : null;
+        const estStr = String(grp.estoque).trim();
+        const estTxt = estStr !== "" && !isNaN(parseInt(estStr, 10)) ? String(Math.max(0, parseInt(estStr, 10))) : null;
+        grp.rows.forEach((r0) => {
+          if (precoTxt != null) { ws[XLSX.utils.encode_cell({ r: r0, c: 6 })] = { t: "s", v: precoTxt }; mudou++; }
+          if (estTxt != null) { ws[XLSX.utils.encode_cell({ r: r0, c: 8 })] = { t: "s", v: estTxt }; }
+        });
+      });
+      if (!mudou) throw new Error("nenhum preço definido");
+      const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+      const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      await entregar(blob, fileName || "shopee-precos.xlsx");
+      setOkMsg("Planilha gerada! Confira e suba no Seller Center da Shopee.");
+    } catch (e) {
+      setErro("Não consegui gerar: " + (e && e.message ? e.message : "erro") + ".");
+    } finally {
+      setGerando(false);
+    }
+  }
+
+  const totalAnuncios = grupos.reduce((s, x) => s + x.nAnuncios, 0);
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold text-stone-300 flex items-center gap-2"><FileSpreadsheet size={15} className="text-orange-500" />Alteração em massa Shopee</h3>
+        <p className="text-[11px] text-stone-500 -mt-1">Baixe a planilha de "alteração em massa de preço/estoque" no Seller Center, suba aqui, ajuste pelos seus produtos e gere o arquivo pronto pra subir de volta.</p>
+        <label className="block">
+          <input type="file" accept=".xlsx"
+            onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) carregar(f); e.target.value = ""; }}
+            className="block w-full text-xs text-stone-400 file:mr-3 file:py-2 file:px-3 file:rounded-lg file:border-0 file:bg-orange-500 file:text-white file:font-semibold file:text-xs hover:file:bg-orange-400 file:cursor-pointer" />
+        </label>
+        {fileName && (
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="text-stone-400 truncate">Arquivo: <span className="text-stone-300">{fileName}</span></span>
+            <button onClick={limpar} className="text-stone-500 hover:text-rose-400 shrink-0 flex items-center gap-1"><X size={12} />limpar</button>
+          </div>
+        )}
+        {erro && grupos.length === 0 && <p className="text-[11px] text-rose-400">{erro}</p>}
+      </Card>
+
+      {grupos.length > 0 && (
+        <>
+          <Card className="p-3">
+            <p className="text-[11px] text-stone-400">Encontrei <span className="text-stone-200 font-semibold">{totalAnuncios} anúncios</span> em {grupos.length} grupo(s). Confira o produto e o preço de cada grupo — o preço vem da aba Produtos, mas dá pra editar aqui:</p>
+          </Card>
+
+          {grupos.map((grp, i) => (
+            <Card key={grp.tipo} className="p-3 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-stone-200">{grp.label}</span>
+                <span className="text-[10px] text-stone-500 shrink-0">{grp.nAnuncios} anúncios · atual {brl(Number(String(grp.precoAtual).replace(",", ".")) || 0)}</span>
+              </div>
+              <p className="text-[10px] text-stone-600 truncate">ex: {grp.exemplo}</p>
+              <label className="block">
+                <span className="text-[11px] text-stone-400">Produto (puxa o preço)</span>
+                <select value={grp.produtoId} onChange={(e) => setProduto(i, e.target.value)}
+                  className="mt-1 w-full bg-stone-800 border border-stone-700 rounded-lg px-2.5 py-2 text-stone-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500/60">
+                  <option value="">— escolher produto —</option>
+                  {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.tipo === "kit" ? " (kit)" : ""}</option>)}
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block"><span className="text-[11px] text-stone-400">Novo preço</span><In value={grp.preco} prefix="R$" placeholder="—" onChange={(e) => setPreco(i, e.target.value)} w="mt-1" /></label>
+                <label className="block"><span className="text-[11px] text-stone-400">Estoque</span><In value={grp.estoque} placeholder="manter" onChange={(e) => setEstoque(i, e.target.value)} w="mt-1" /></label>
+              </div>
+            </Card>
+          ))}
+
+          <button onClick={gerar} disabled={gerando}
+            className="w-full py-2.5 rounded-xl bg-orange-500 text-white font-semibold text-sm hover:bg-orange-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            <Download size={16} />{gerando ? "Gerando…" : "Gerar planilha"}
+          </button>
+          {okMsg && <p className="text-[11px] text-emerald-400 text-center">{okMsg}</p>}
+          {erro && <p className="text-[11px] text-rose-400 text-center">{erro}</p>}
+          <p className="text-[10px] text-stone-600 text-center">O arquivo sai idêntico ao original (mesmos códigos e formato), só com preço/estoque trocados. Teste subir na Shopee antes de confiar 100%.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("produtos");
@@ -1781,6 +1984,7 @@ export default function App() {
     { id: "despesas", label: "Despesas", icon: TrendingDown },
     { id: "financeiro", label: "Financeiro", icon: Wallet },
     { id: "relatorios", label: "Tabela de preços", icon: FileText },
+    { id: "shopee", label: "Shopee", icon: FileSpreadsheet },
   ];
 
   return (
@@ -1815,6 +2019,7 @@ export default function App() {
         {tab === "despesas" && <DespesasTab data={data} setData={setData} />}
         {tab === "financeiro" && <FinanceiroTab data={data} g={g} />}
         {tab === "relatorios" && <RelatoriosTab data={data} g={g} setData={setData} />}
+        {tab === "shopee" && <ShopeeTab data={data} g={g} />}
       </div>
     </div>
   );

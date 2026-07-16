@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   User, Handshake, Store, Plus, Trash2, Package, Calculator,
   Receipt, Percent, Droplet, TrendingUp, TrendingDown, Wallet, ShoppingBag, Tag, Link2, Layers,
-  FileText, Download, Filter, ChevronDown, Image as ImageIcon, Save, Upload, X, Calendar, FileSpreadsheet,
+  FileText, Download, Filter, ChevronDown, Image as ImageIcon, Save, Upload, X, Calendar, FileSpreadsheet, Pencil, Check,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
@@ -51,22 +51,45 @@ function custoItem(item, g) {
   return { custo: matUn + papelUn + tintaUn + custosUn, matUn, papelUn, tintaUn, custosUn };
 }
 
-/* preços de um PRODUTO (deriva o custo do item + margens próprias) */
+/* margens padrão para produtos ainda não precificados */
+const DEF_MARGENS = { normal: 60, atacado: 35, shopee: 30 };
+
+/* preços de um PRODUTO: o PREÇO é a fonte da verdade; a margem é derivada do custo atual.
+   Se o produto ainda não tem preço salvo, cai no padrão (margem) só como ponto de partida. */
 function precosProduto(prod, itens, g) {
   const item = itens.find((i) => i.id === prod.itemId);
   const base = custoItem(item, g).custo;
   const mult = prod.tipo === "kit" ? Math.max(1, prod.qtd || 1) : 1;
   const custo = base * mult;
-  const normal = custo * (1 + prod.margemNormal / 100);
-  const atacado = custo * (1 + prod.margemAtacado / 100);
-  const precoShopee = custo * (1 + prod.margemShopee / 100);
+  const normal = prod.precoNormal != null ? prod.precoNormal : custo * (1 + (prod.margemNormal != null ? prod.margemNormal : DEF_MARGENS.normal) / 100);
+  const atacado = prod.precoAtacado != null ? prod.precoAtacado : custo * (1 + (prod.margemAtacado != null ? prod.margemAtacado : DEF_MARGENS.atacado) / 100);
+  const precoShopee = prod.precoShopee != null ? prod.precoShopee : custo * (1 + (prod.margemShopee != null ? prod.margemShopee : DEF_MARGENS.shopee) / 100);
   const tx = taxaShopee(precoShopee, g);
   const dev = g.shopeeDevolucaoFacil ? 0.49 : 0;
   const ganho = precoShopee - tx.taxa - dev; // preço final − comissão − taxa fixa − devolução fácil
+  const margem = (p) => (custo > 0 ? (p / custo - 1) * 100 : 0);
   return {
     item, custo, base, mult, normal, atacado,
+    margemNormal: margem(normal), margemAtacado: margem(atacado), margemShopee: margem(precoShopee),
     shopee: { preco: precoShopee, taxa: tx.taxa, dev, faixa: tx.faixa, ganho, lucro: ganho - custo },
   };
+}
+
+/* normaliza um produto e, na primeira vez, congela o PREÇO atual (converte margem→preço),
+   pra que mudanças futuras de custo mexam só na margem, não no preço. */
+function normalizarProduto(p, itens, global) {
+  const q = { tipo: "unidade", qtd: 1, vendeAtacado: true, ...p };
+  if (q.precoNormal == null || q.precoAtacado == null || q.precoShopee == null) {
+    const item = (itens || []).find((i) => i.id === q.itemId);
+    const custo = custoItem(item, global).custo * (q.tipo === "kit" ? Math.max(1, q.qtd || 1) : 1);
+    if (custo > 0) {
+      const r2 = (n) => Math.round(n * 100) / 100;
+      if (q.precoNormal == null) q.precoNormal = r2(custo * (1 + (q.margemNormal != null ? q.margemNormal : DEF_MARGENS.normal) / 100));
+      if (q.precoAtacado == null) q.precoAtacado = r2(custo * (1 + (q.margemAtacado != null ? q.margemAtacado : DEF_MARGENS.atacado) / 100));
+      if (q.precoShopee == null) q.precoShopee = r2(custo * (1 + (q.margemShopee != null ? q.margemShopee : DEF_MARGENS.shopee) / 100));
+    }
+  }
+  return q;
 }
 
 /* ---------- estado inicial + migração ---------- */
@@ -161,7 +184,7 @@ function Seg({ options, value, onChange, sm = false }) {
   );
 }
 
-function PrecoEditavel({ valor, custo, onMargem }) {
+function PrecoEditavel({ valor, onPreco }) {
   const [foco, setFoco] = useState(false);
   const [txt, setTxt] = useState("");
   const fmt = (n) => (n > 0 ? n.toFixed(2).replace(".", ",") : "");
@@ -177,7 +200,7 @@ function PrecoEditavel({ valor, custo, onMargem }) {
           const v = e.target.value;
           setTxt(v);
           const p = parseFloat(v.replace(",", "."));
-          if (custo > 0 && !isNaN(p)) onMargem(Math.round((p / custo - 1) * 10000) / 100);
+          if (!isNaN(p) && p >= 0) onPreco(Math.round(p * 100) / 100);
         }}
         className="w-full min-w-0 bg-transparent border-0 border-b border-dashed border-stone-600 focus:border-orange-500 outline-none text-lg font-bold text-stone-100 tabular-nums px-0 py-0"
         style={{ fontFamily: "'Space Mono', monospace" }}
@@ -186,12 +209,12 @@ function PrecoEditavel({ valor, custo, onMargem }) {
   );
 }
 
-function PriceCell({ label, icon: Icon, valor, sub, tint = false, subClass = "text-emerald-400/80", editavel = false, custo = 0, onMargem }) {
+function PriceCell({ label, icon: Icon, valor, sub, tint = false, subClass = "text-emerald-400/80", editavel = false, custo = 0, onPreco }) {
   return (
     <div className={`p-3 ${tint ? "bg-orange-500/[0.06]" : ""}`}>
       <div className="flex items-center gap-1 text-[11px] text-stone-400 mb-1">{Icon && <Icon size={12} />}<span>{label}</span></div>
       {editavel && custo > 0
-        ? <PrecoEditavel valor={valor} custo={custo} onMargem={onMargem} />
+        ? <PrecoEditavel valor={valor} onPreco={onPreco} />
         : <Mono className="text-lg font-bold text-stone-100">{brl(valor)}</Mono>}
       {sub && <div className={`text-[10px] mt-0.5 ${subClass}`}>{sub}</div>}
     </div>
@@ -411,11 +434,11 @@ function ProdutoCard({ prod, itens, g, upd, remover, aberto, onToggle }) {
         </label>
 
         <div className={`grid gap-2 ${prod.vendeAtacado ? "grid-cols-3" : "grid-cols-2"}`}>
-          <label className="block"><span className="text-[10px] text-stone-400 flex items-center gap-0.5"><User size={11} />Normal</span><In value={prod.margemNormal} suffix="%" onChange={(e) => upd(prod.id, { margemNormal: num(e) })} w="mt-1" /></label>
+          <label className="block"><span className="text-[10px] text-stone-400 flex items-center gap-0.5"><User size={11} />Normal</span><In value={pr.custo > 0 ? Math.round(pr.margemNormal) : ""} suffix="%" onChange={(e) => { if (pr.custo > 0) upd(prod.id, { precoNormal: Math.round(pr.custo * (1 + num(e) / 100) * 100) / 100 }); }} w="mt-1" /></label>
           {prod.vendeAtacado && (
-            <label className="block"><span className="text-[10px] text-stone-400 flex items-center gap-0.5"><Handshake size={11} />Atacado</span><In value={prod.margemAtacado} suffix="%" onChange={(e) => upd(prod.id, { margemAtacado: num(e) })} w="mt-1" /></label>
+            <label className="block"><span className="text-[10px] text-stone-400 flex items-center gap-0.5"><Handshake size={11} />Atacado</span><In value={pr.custo > 0 ? Math.round(pr.margemAtacado) : ""} suffix="%" onChange={(e) => { if (pr.custo > 0) upd(prod.id, { precoAtacado: Math.round(pr.custo * (1 + num(e) / 100) * 100) / 100 }); }} w="mt-1" /></label>
           )}
-          <label className="block"><span className="text-[10px] text-stone-400 flex items-center gap-0.5"><Store size={11} />Shopee</span><In value={prod.margemShopee} suffix="%" onChange={(e) => upd(prod.id, { margemShopee: num(e) })} w="mt-1" /></label>
+          <label className="block"><span className="text-[10px] text-stone-400 flex items-center gap-0.5"><Store size={11} />Shopee</span><In value={pr.custo > 0 ? Math.round(pr.margemShopee) : ""} suffix="%" onChange={(e) => { if (pr.custo > 0) upd(prod.id, { precoShopee: Math.round(pr.custo * (1 + num(e) / 100) * 100) / 100 }); }} w="mt-1" /></label>
         </div>
       </div>
 
@@ -423,14 +446,14 @@ function ProdutoCard({ prod, itens, g, upd, remover, aberto, onToggle }) {
         <div className="p-3 text-xs text-stone-600 text-center">selecione um item pra ver os preços</div>
       ) : (
         <div className={`grid divide-x divide-stone-800 ${prod.vendeAtacado ? "grid-cols-3" : "grid-cols-2"}`}>
-          <PriceCell editavel custo={pr.custo} onMargem={(m) => upd(prod.id, { margemNormal: m })}
-            label={`Normal ${Math.round(prod.margemNormal)}%`} icon={User} valor={pr.normal} sub={`lucro ${brl(pr.normal - pr.custo)}`} />
+          <PriceCell editavel custo={pr.custo} onPreco={(v) => upd(prod.id, { precoNormal: v })}
+            label={`Normal ${Math.round(pr.margemNormal)}%`} icon={User} valor={pr.normal} sub={`lucro ${brl(pr.normal - pr.custo)}`} />
           {prod.vendeAtacado && (
-            <PriceCell editavel custo={pr.custo} onMargem={(m) => upd(prod.id, { margemAtacado: m })}
-              label={`Atacado ${Math.round(prod.margemAtacado)}%`} icon={Handshake} valor={pr.atacado} sub={`lucro ${brl(pr.atacado - pr.custo)}`} />
+            <PriceCell editavel custo={pr.custo} onPreco={(v) => upd(prod.id, { precoAtacado: v })}
+              label={`Atacado ${Math.round(pr.margemAtacado)}%`} icon={Handshake} valor={pr.atacado} sub={`lucro ${brl(pr.atacado - pr.custo)}`} />
           )}
-          <PriceCell tint editavel custo={pr.custo} onMargem={(m) => upd(prod.id, { margemShopee: m })}
-            label={`Shopee ${Math.round(prod.margemShopee)}%`} icon={Store} valor={pr.shopee.preco}
+          <PriceCell tint editavel custo={pr.custo} onPreco={(v) => upd(prod.id, { precoShopee: v })}
+            label={`Shopee ${Math.round(pr.margemShopee)}%`} icon={Store} valor={pr.shopee.preco}
             sub={`recebo ${brl(pr.shopee.ganho)}`}
             subClass={pr.shopee.ganho < 0 ? "text-rose-400" : "text-emerald-400/80"} />
         </div>
@@ -505,21 +528,27 @@ function rotuloFiltro(f) {
 
 function VendasTab({ data, g, setData }) {
   const anoAtual = new Date().getFullYear();
-  const [form, setForm] = useState({ produtoId: data.produtos[0]?.id || "", canal: "presencial", tier: "normal", qtd: 1, tema: "", custoExtraNome: "", custoExtra: 0, hoje: true, data: toYMD(new Date()), obs: "" });
+  const formVazio = { produtoId: data.produtos[0]?.id || "", canal: "presencial", tier: "normal", qtd: 1, tema: "", custoExtraNome: "", custoExtra: 0, hoje: true, data: toYMD(new Date()), obs: "" };
+  const [form, setForm] = useState(formVazio);
+  const [edit, setEdit] = useState(null); // venda em edição (ou null)
   const [filtro, setFiltro] = useState({ modo: "tudo", ano: anoAtual, mes: "", dia: "", de: "", ate: "" });
+  const [editandoTema, setEditandoTema] = useState(null);
+  const [temaNovo, setTemaNovo] = useState("");
   const prod = data.produtos.find((p) => p.id === form.produtoId);
   const tags = data.global.tags || [];
 
   const preview = useMemo(() => {
     if (!prod) return null;
     const pr = precosProduto(prod, data.itens, g);
-    const custoUn = pr.custo;
-    let precoUn, tier;
-    if (form.canal === "shopee") {
-      precoUn = pr.shopee.preco; tier = "shopee";
+    // ao editar, se produto/canal/tier não mudaram, preserva preço e custo históricos
+    const tierForm = form.canal === "shopee" ? "shopee" : (form.tier === "atacado" && prod.vendeAtacado ? "atacado" : "normal");
+    const mesmaBase = edit && edit.produtoId === form.produtoId && edit.canal === form.canal && edit.tier === tierForm;
+    let precoUn, custoUn, tier;
+    if (mesmaBase) {
+      precoUn = edit.precoUnit; custoUn = edit.custoUnit; tier = edit.tier;
     } else {
-      tier = form.tier === "atacado" && prod.vendeAtacado ? "atacado" : "normal";
-      precoUn = tier === "atacado" ? pr.atacado : pr.normal;
+      custoUn = pr.custo; tier = tierForm;
+      precoUn = form.canal === "shopee" ? pr.shopee.preco : (tier === "atacado" ? pr.atacado : pr.normal);
     }
     const qtd = Math.max(1, form.qtd || 1);
     const receita = precoUn * qtd;
@@ -531,14 +560,13 @@ function VendasTab({ data, g, setData }) {
     const extraNome = (form.custoExtraNome || "").trim();
     const receitaLiq = receita - taxa - extra;
     return { precoUn, custoUn, qtd, receita, custoTotal: custoUn * qtd, taxa, taxaItens, dev, txCom: tx ? tx.com : 0, txFixa: tx ? tx.fixa : 0, extra, extraNome, receitaLiq, lucro: receitaLiq - custoUn * qtd, tier };
-  }, [prod, form, g, data.itens]);
+  }, [prod, form, g, data.itens, edit]);
 
-  function registrar() {
+  function salvar() {
     if (!prod || !preview) return;
     const item = data.itens.find((i) => i.id === prod.itemId);
     const tema = form.tema.trim();
-    const v = {
-      id: Date.now().toString(),
+    const base = {
       produtoId: prod.id, nome: prod.nome, cor: item?.cor, tipoProd: prod.tipo,
       canal: form.canal, tier: preview.tier, qtd: preview.qtd, tema,
       precoUnit: preview.precoUn, custoUnit: preview.custoUn,
@@ -548,16 +576,49 @@ function VendasTab({ data, g, setData }) {
     setData((d) => {
       const cur = d.global.tags || [];
       const tagsNovas = tema && !cur.includes(tema) ? [...cur, tema] : cur;
-      return { ...d, global: { ...d.global, tags: tagsNovas }, vendas: [v, ...d.vendas] };
+      const vendas = edit
+        ? d.vendas.map((x) => (x.id === edit.id ? { ...x, ...base } : x))
+        : [{ id: Date.now().toString(), ...base }, ...d.vendas];
+      return { ...d, global: { ...d.global, tags: tagsNovas }, vendas };
     });
-    setForm((f) => ({ ...f, qtd: 1, custoExtraNome: "", custoExtra: 0, obs: "" }));
+    if (edit) { setEdit(null); setForm(formVazio); }
+    else setForm((f) => ({ ...f, qtd: 1, custoExtraNome: "", custoExtra: 0, obs: "" }));
   }
 
-  const excluir = (id) => setData((d) => ({ ...d, vendas: d.vendas.filter((v) => v.id !== id) }));
+  function iniciarEdicao(v) {
+    setEdit(v);
+    setForm({
+      produtoId: v.produtoId, canal: v.canal,
+      tier: v.tier === "atacado" ? "atacado" : "normal",
+      qtd: v.qtd, tema: v.tema || "", custoExtraNome: v.custoExtraNome || "", custoExtra: v.custoExtra || 0,
+      hoje: false, data: toYMD(new Date(v.data)), obs: v.obs || "",
+    });
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function cancelarEdicao() { setEdit(null); setForm(formVazio); }
+
+  const excluir = (id) => {
+    setData((d) => ({ ...d, vendas: d.vendas.filter((v) => v.id !== id) }));
+    if (edit && edit.id === id) cancelarEdicao();
+  };
   const removerTema = (t) => {
     setData((d) => ({ ...d, global: { ...d.global, tags: (d.global.tags || []).filter((x) => x !== t) } }));
     setForm((f) => (f.tema === t ? { ...f, tema: "" } : f));
+    if (editandoTema === t) setEditandoTema(null);
   };
+  function iniciarEdicaoTema(t) { setEditandoTema(t); setTemaNovo(t); }
+  function salvarTema() {
+    const nn = temaNovo.trim();
+    const old = editandoTema;
+    if (!nn || nn === old) { setEditandoTema(null); return; }
+    setData((d) => {
+      const tags = [...new Set((d.global.tags || []).map((x) => (x === old ? nn : x)))];
+      const vendas = d.vendas.map((v) => (v.tema === old ? { ...v, tema: nn } : v));
+      return { ...d, global: { ...d.global, tags }, vendas };
+    });
+    setForm((f) => (f.tema === old ? { ...f, tema: nn } : f));
+    setEditandoTema(null);
+  }
   const vendasFiltradas = useMemo(() => data.vendas.filter((v) => noFiltro(v.data, filtro)), [data.vendas, filtro]);
   const anos = useMemo(() => {
     const s = new Set(data.vendas.map((v) => new Date(v.data).getFullYear()));
@@ -571,7 +632,10 @@ function VendasTab({ data, g, setData }) {
   return (
     <div className="space-y-4">
       <Card className="p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-stone-300 flex items-center gap-2"><Receipt size={15} className="text-orange-500" />Registrar venda</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-stone-300 flex items-center gap-2"><Receipt size={15} className="text-orange-500" />{edit ? "Editar venda" : "Registrar venda"}</h3>
+          {edit && <button onClick={cancelarEdicao} className="text-[11px] text-stone-400 hover:text-stone-200 flex items-center gap-1"><X size={12} />cancelar</button>}
+        </div>
         {data.produtos.length === 0 ? (
           <p className="text-xs text-stone-500">Cadastre um produto na aba Produtos primeiro.</p>
         ) : (
@@ -592,11 +656,25 @@ function VendasTab({ data, g, setData }) {
                 <div className="flex flex-wrap gap-1 mt-1.5">
                   {tags.map((t) => (
                     <span key={t} className={`inline-flex items-center rounded border text-[10px] transition-colors ${form.tema === t ? "bg-orange-500 border-orange-500 text-white" : "border-stone-700 text-stone-400"}`}>
-                      <button type="button" onClick={() => setForm((f) => ({ ...f, tema: t }))} className="pl-1.5 pr-1 py-0.5 hover:opacity-80">{t}</button>
+                      <button type="button" onClick={() => setForm((f) => ({ ...f, tema: t }))} className="pl-1.5 py-0.5 hover:opacity-80">{t}</button>
+                      <button type="button" onClick={() => iniciarEdicaoTema(t)} title="Renomear tema" className={`px-0.5 py-0.5 ${form.tema === t ? "text-white/70 hover:text-white" : "text-stone-600 hover:text-orange-400"}`}><Pencil size={9} /></button>
                       <button type="button" onClick={() => removerTema(t)} title="Remover tema" className={`pr-1 py-0.5 ${form.tema === t ? "text-white/70 hover:text-white" : "text-stone-600 hover:text-rose-400"}`}><X size={10} /></button>
                     </span>
                   ))}
                 </div>
+              )}
+              {editandoTema && (
+                <>
+                  <div className="mt-2 flex items-center gap-1.5 bg-black/20 rounded-lg p-1.5">
+                    <span className="text-[10px] text-stone-500 shrink-0">Renomear:</span>
+                    <input autoFocus value={temaNovo} onChange={(e) => setTemaNovo(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") salvarTema(); if (e.key === "Escape") setEditandoTema(null); }}
+                      className="flex-1 min-w-0 bg-stone-800 border border-stone-700 rounded px-2 py-1 text-stone-100 text-xs focus:outline-none focus:ring-1 focus:ring-orange-500/60" />
+                    <button type="button" onClick={salvarTema} title="Salvar" className="p-1 text-emerald-400 hover:text-emerald-300 shrink-0"><Check size={14} /></button>
+                    <button type="button" onClick={() => setEditandoTema(null)} title="Cancelar" className="p-1 text-stone-500 hover:text-stone-300 shrink-0"><X size={14} /></button>
+                  </div>
+                  <p className="text-[10px] text-stone-600 mt-1">Renomear atualiza todas as vendas com esse tema.</p>
+                </>
               )}
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -654,10 +732,18 @@ function VendasTab({ data, g, setData }) {
               </div>
             )}
 
-            <button onClick={registrar} disabled={!preview}
-              className="w-full py-2.5 rounded-xl bg-orange-500 text-white font-semibold text-sm hover:bg-orange-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-              <Plus size={16} />Registrar venda
-            </button>
+            <div className="flex gap-2">
+              {edit && (
+                <button onClick={cancelarEdicao}
+                  className="py-2.5 px-4 rounded-xl bg-stone-800 text-stone-300 font-semibold text-sm hover:bg-stone-700 transition-colors">
+                  Cancelar
+                </button>
+              )}
+              <button onClick={salvar} disabled={!preview}
+                className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-semibold text-sm hover:bg-orange-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                {edit ? <><Check size={16} />Salvar alterações</> : <><Plus size={16} />Registrar venda</>}
+              </button>
+            </div>
           </>
         )}
       </Card>
@@ -703,7 +789,7 @@ function VendasTab({ data, g, setData }) {
                   const dt = new Date(v.data).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
                   const canalLabel = v.canal === "shopee" ? "Shopee" : `Presencial · ${v.tier}`;
                   return (
-                    <div key={v.id} className="flex items-center gap-3 p-2.5 bg-black/20 rounded-xl">
+                    <div key={v.id} className={`flex items-center gap-3 p-2.5 rounded-xl ${edit && edit.id === v.id ? "bg-orange-500/10 ring-1 ring-orange-500/40" : "bg-black/20"}`}>
                       <Chip cor={cor} size={30} kit={kit} />
                       <div className="flex-1 min-w-0">
                         <div className="text-sm text-stone-200 truncate">{nome} <span className="text-[10px] text-stone-500">×{v.qtd}</span></div>
@@ -718,7 +804,10 @@ function VendasTab({ data, g, setData }) {
                         <Mono className="text-sm text-emerald-400 font-bold">{brl(v.receitaLiq)}</Mono>
                         {v.taxa > 0 && <div className="text-[10px] text-stone-500">bruto {brl(v.receita)}</div>}
                       </div>
-                      <button onClick={() => excluir(v.id)} className="text-stone-600 hover:text-rose-400 p-1 shrink-0"><Trash2 size={14} /></button>
+                      <div className="flex items-center shrink-0">
+                        <button onClick={() => iniciarEdicao(v)} title="Editar" className="text-stone-600 hover:text-orange-400 p-1"><Pencil size={14} /></button>
+                        <button onClick={() => excluir(v.id)} title="Excluir" className="text-stone-600 hover:text-rose-400 p-1"><Trash2 size={14} /></button>
+                      </div>
                     </div>
                   );
                 })}
@@ -747,9 +836,8 @@ function FinanceiroTab({ data, g }) {
     const vs = vendasFiltradas;
     const recebido = vs.reduce((s, v) => s + v.receitaLiq, 0);
     const custoProd = vs.reduce((s, v) => s + (v.custoUnit || 0) * v.qtd, 0);
-    const lucroBruto = recebido - custoProd;
     const despesas = despesasFiltradas.reduce((s, e) => s + (e.valor || 0), 0);
-    const resultado = lucroBruto - despesas;
+    const resultado = recebido - despesas; // custo dos produtos não entra: já está lançado nas despesas (insumos)
     const nVendas = vs.length;
     const itens = vs.reduce((s, v) => s + v.qtd, 0);
     const ticket = nVendas ? recebido / nVendas : 0;
@@ -767,7 +855,7 @@ function FinanceiroTab({ data, g }) {
     vs.forEach((v) => addM(v.data, "receita", v.receitaLiq));
     despesasFiltradas.forEach((e) => addM(e.data, "despesa", e.valor || 0));
     const porMes = Object.values(mapM).sort((a, b) => a.mes.localeCompare(b.mes)).map((m) => ({ ...m, label: m.mes.split("-").reverse().join("/").slice(0, 5) }));
-    return { recebido, custoProd, lucroBruto, despesas, resultado, nVendas, itens, ticket, margem, porCanal, porProduto, porTema, porMes };
+    return { recebido, custoProd, despesas, resultado, nVendas, itens, ticket, margem, porCanal, porProduto, porTema, porMes };
   }, [vendasFiltradas, despesasFiltradas, data.produtos]);
 
   const tt = { backgroundColor: "#1c1917", border: "1px solid #44403c", borderRadius: 10, fontSize: 12, color: "#e7e5e4" };
@@ -823,10 +911,10 @@ function FinanceiroTab({ data, g }) {
 
       sec("Resumo financeiro");
       linha("Recebido", moneyPDF(K.recebido));
-      linha("Custo dos produtos", "-" + moneyPDF(K.custoProd));
       linha("Despesas", "-" + moneyPDF(K.despesas));
       linha("Lucro", moneyPDF(K.resultado), true);
       y += 1.5;
+      linha("Custo dos produtos (ja nas despesas)", moneyPDF(K.custoProd));
       linha("Margem", K.margem.toFixed(1) + "%");
       linha("Ticket médio", moneyPDF(K.ticket));
       linha("Vendas (pedidos)", String(K.nVendas));
@@ -985,10 +1073,10 @@ function FinanceiroTab({ data, g }) {
           <Card className="p-3 bg-black/20">
             <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
               <span className="text-stone-400">Recebido</span><span className="text-right"><Mono className="text-emerald-400">{brl(K.recebido)}</Mono></span>
-              <span className="text-stone-400">− Custo dos produtos</span><span className="text-right"><Mono className="text-stone-300">{brl(K.custoProd)}</Mono></span>
               <span className="text-stone-400">− Despesas</span><span className="text-right"><Mono className="text-rose-400">{brl(K.despesas)}</Mono></span>
               <span className="text-stone-200 font-semibold pt-1 border-t border-stone-800">= Lucro</span><span className="text-right pt-1 border-t border-stone-800"><Mono className={`font-bold ${K.resultado >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{brl(K.resultado)}</Mono></span>
             </div>
+            <p className="text-[10px] text-stone-600 mt-2">Custo estimado dos produtos: {brl(K.custoProd)} — não entra no lucro aqui, pois os insumos já são lançados em Despesas.</p>
           </Card>
 
           {K.porMes.length > 0 && (
@@ -1526,7 +1614,7 @@ function RelatoriosTab({ data, g, setData }) {
         if (!window.confirm("Isso vai substituir os dados atuais deste aparelho. Continuar?")) return;
         d.global = { ...DEFAULT.global, ...(d.global || {}) };
         if (!d.itens || !d.itens.length) d.itens = DEFAULT.itens;
-        d.produtos = (d.produtos || []).map((p) => ({ tipo: "unidade", qtd: 1, vendeAtacado: true, ...p }));
+        d.produtos = (d.produtos || []).map((p) => normalizarProduto(p, d.itens, d.global));
         if (!d.vendas) d.vendas = [];
         if (!d.despesas) d.despesas = [];
         setData(d);
@@ -1605,7 +1693,9 @@ function RelatoriosTab({ data, g, setData }) {
 /* ---------- APP ---------- */
 function DespesasTab({ data, setData }) {
   const CATS = ["Embalagem", "Envelope de postagem", "Fita adesiva", "Insumos", "Etiquetas", "Frete", "Outros"];
-  const [form, setForm] = useState({ categoria: "", valor: 0, qtd: 1, hoje: true, data: toYMD(new Date()), obs: "" });
+  const formVazio = { categoria: "", valor: 0, qtd: 1, hoje: true, data: toYMD(new Date()), obs: "" };
+  const [form, setForm] = useState(formVazio);
+  const [edit, setEdit] = useState(null);
   const [per, setPer] = useState("mes");
 
   const inPer = (iso) => {
@@ -1615,16 +1705,31 @@ function DespesasTab({ data, setData }) {
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
   };
 
-  function registrar() {
+  function salvar() {
     const cat = form.categoria.trim();
     if (!cat || !(form.valor > 0)) return;
     const iso = form.hoje ? new Date().toISOString() : new Date((form.data || toYMD(new Date())) + "T12:00:00").toISOString();
     const q = Math.max(1, Math.round(form.qtd || 1));
-    const e = { id: Date.now().toString(), categoria: cat, valor: form.valor, qtd: q, data: iso, obs: form.obs.trim() };
-    setData((d) => ({ ...d, despesas: [e, ...(d.despesas || [])] }));
-    setForm((f) => ({ ...f, valor: 0, qtd: 1, obs: "" }));
+    const base = { categoria: cat, valor: form.valor, qtd: q, data: iso, obs: form.obs.trim() };
+    setData((d) => ({
+      ...d,
+      despesas: edit
+        ? (d.despesas || []).map((x) => (x.id === edit.id ? { ...x, ...base } : x))
+        : [{ id: Date.now().toString(), ...base }, ...(d.despesas || [])],
+    }));
+    if (edit) { setEdit(null); setForm(formVazio); }
+    else setForm((f) => ({ ...f, valor: 0, qtd: 1, obs: "" }));
   }
-  const excluir = (id) => setData((d) => ({ ...d, despesas: (d.despesas || []).filter((x) => x.id !== id) }));
+  function iniciarEdicao(e) {
+    setEdit(e);
+    setForm({ categoria: e.categoria, valor: e.valor, qtd: e.qtd || 1, hoje: false, data: toYMD(new Date(e.data)), obs: e.obs || "" });
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+  function cancelarEdicao() { setEdit(null); setForm(formVazio); }
+  const excluir = (id) => {
+    setData((d) => ({ ...d, despesas: (d.despesas || []).filter((x) => x.id !== id) }));
+    if (edit && edit.id === id) cancelarEdicao();
+  };
 
   const despFiltradas = useMemo(
     () => (data.despesas || []).filter((e) => inPer(e.data)).sort((a, b) => new Date(b.data) - new Date(a.data)),
@@ -1646,7 +1751,10 @@ function DespesasTab({ data, setData }) {
     <div className="space-y-4">
       {/* registrar despesa */}
       <Card className="p-4 space-y-3">
-        <h3 className="text-sm font-semibold text-stone-300 flex items-center gap-2"><TrendingDown size={15} className="text-orange-500" />Registrar despesa</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-stone-300 flex items-center gap-2"><TrendingDown size={15} className="text-orange-500" />{edit ? "Editar despesa" : "Registrar despesa"}</h3>
+          {edit && <button onClick={cancelarEdicao} className="text-[11px] text-stone-400 hover:text-stone-200 flex items-center gap-1"><X size={12} />cancelar</button>}
+        </div>
         <label className="block">
           <span className="text-[11px] text-stone-400">Categoria</span>
           <input list="lista-cats" value={form.categoria} onChange={(e) => setForm((f) => ({ ...f, categoria: e.target.value }))} placeholder="ex: embalagem, envelope, fita..."
@@ -1683,10 +1791,18 @@ function DespesasTab({ data, setData }) {
           <input value={form.obs} onChange={(e) => setForm((f) => ({ ...f, obs: e.target.value }))} placeholder="ex: 100 saquinhos, rolo de fita..."
             className="mt-1 w-full bg-stone-800 border border-stone-700 rounded-lg px-2.5 py-2 text-stone-100 text-sm focus:outline-none focus:ring-1 focus:ring-orange-500/60 placeholder:text-stone-600" />
         </label>
-        <button onClick={registrar} disabled={!form.categoria.trim() || !(form.valor > 0)}
-          className="w-full py-2.5 rounded-xl bg-orange-500 text-white font-semibold text-sm hover:bg-orange-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-          Adicionar despesa
-        </button>
+        <div className="flex gap-2">
+          {edit && (
+            <button onClick={cancelarEdicao}
+              className="py-2.5 px-4 rounded-xl bg-stone-800 text-stone-300 font-semibold text-sm hover:bg-stone-700 transition-colors">
+              Cancelar
+            </button>
+          )}
+          <button onClick={salvar} disabled={!form.categoria.trim() || !(form.valor > 0)}
+            className="flex-1 py-2.5 rounded-xl bg-orange-500 text-white font-semibold text-sm hover:bg-orange-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            {edit ? <><Check size={16} />Salvar alterações</> : "Adicionar despesa"}
+          </button>
+        </div>
       </Card>
 
       {/* período */}
@@ -1732,13 +1848,16 @@ function DespesasTab({ data, setData }) {
               const dt = new Date(e.data).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
               const q = e.qtd || 1;
               return (
-                <div key={e.id} className="flex items-center gap-2 bg-black/20 rounded-lg px-2.5 py-2">
+                <div key={e.id} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 ${edit && edit.id === e.id ? "bg-orange-500/10 ring-1 ring-orange-500/40" : "bg-black/20"}`}>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm text-stone-200 truncate">{e.categoria}{q > 1 ? <span className="text-stone-500"> ×{q}</span> : null}{e.obs ? <span className="text-stone-500"> · {e.obs}</span> : null}</div>
                     <div className="text-[10px] text-stone-500">{dt}{q > 1 ? ` · ${brl(e.valor / q)}/un` : ""}</div>
                   </div>
                   <Mono className="text-rose-400 text-sm shrink-0">−{brl(e.valor)}</Mono>
-                  <button onClick={() => excluir(e.id)} className="text-stone-600 hover:text-rose-400 p-1 shrink-0"><Trash2 size={14} /></button>
+                  <div className="flex items-center shrink-0">
+                    <button onClick={() => iniciarEdicao(e)} title="Editar" className="text-stone-600 hover:text-orange-400 p-1"><Pencil size={14} /></button>
+                    <button onClick={() => excluir(e.id)} title="Excluir" className="text-stone-600 hover:text-rose-400 p-1"><Trash2 size={14} /></button>
+                  </div>
                 </div>
               );
             })}
@@ -1943,7 +2062,7 @@ export default function App() {
       try {
         d.global = { ...DEFAULT.global, ...(d.global || {}) };
         if (!d.itens?.length) d.itens = DEFAULT.itens;
-        d.produtos = (d.produtos || []).map((p) => ({ tipo: "unidade", qtd: 1, vendeAtacado: true, ...p }));
+        d.produtos = (d.produtos || []).map((p) => normalizarProduto(p, d.itens, d.global));
         if (!d.vendas) d.vendas = [];
         if (!d.despesas) d.despesas = [];
       } catch {}

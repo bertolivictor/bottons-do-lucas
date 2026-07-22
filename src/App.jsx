@@ -528,7 +528,7 @@ function rotuloFiltro(f) {
 
 function VendasTab({ data, g, setData }) {
   const anoAtual = new Date().getFullYear();
-  const formVazio = { produtoId: data.produtos[0]?.id || "", canal: "presencial", tier: "normal", qtd: 1, tema: "", custoExtraNome: "", custoExtra: 0, hoje: true, data: toYMD(new Date()), obs: "" };
+  const formVazio = { produtoId: data.produtos[0]?.id || "", canal: "presencial", tier: "normal", qtd: 1, tema: "", custoExtraNome: "", custoExtra: 0, precoManual: false, precoCustom: 0, hoje: true, data: toYMD(new Date()), obs: "" };
   const [form, setForm] = useState(formVazio);
   const [edit, setEdit] = useState(null); // venda em edição (ou null)
   const [filtro, setFiltro] = useState({ modo: "tudo", ano: anoAtual, mes: "", dia: "", de: "", ate: "" });
@@ -540,16 +540,12 @@ function VendasTab({ data, g, setData }) {
   const preview = useMemo(() => {
     if (!prod) return null;
     const pr = precosProduto(prod, data.itens, g);
-    // ao editar, se produto/canal/tier não mudaram, preserva preço e custo históricos
-    const tierForm = form.canal === "shopee" ? "shopee" : (form.tier === "atacado" && prod.vendeAtacado ? "atacado" : "normal");
-    const mesmaBase = edit && edit.produtoId === form.produtoId && edit.canal === form.canal && edit.tier === tierForm;
-    let precoUn, custoUn, tier;
-    if (mesmaBase) {
-      precoUn = edit.precoUnit; custoUn = edit.custoUnit; tier = edit.tier;
-    } else {
-      custoUn = pr.custo; tier = tierForm;
-      precoUn = form.canal === "shopee" ? pr.shopee.preco : (tier === "atacado" ? pr.atacado : pr.normal);
-    }
+    const tier = form.canal === "shopee" ? "shopee" : (form.tier === "atacado" && prod.vendeAtacado ? "atacado" : "normal");
+    const precoRegistrado = form.canal === "shopee" ? pr.shopee.preco : (tier === "atacado" ? pr.atacado : pr.normal);
+    // preço: da aba Produtos (registrado) ou personalizado pra esta venda
+    const precoUn = form.precoManual ? Math.max(0, form.precoCustom || 0) : precoRegistrado;
+    // custo: preserva o histórico ao editar o mesmo produto; senão usa o custo atual
+    const custoUn = edit && edit.produtoId === form.produtoId ? edit.custoUnit : pr.custo;
     const qtd = Math.max(1, form.qtd || 1);
     const receita = precoUn * qtd;
     const tx = form.canal === "shopee" ? taxaShopee(precoUn, g) : null;
@@ -559,7 +555,7 @@ function VendasTab({ data, g, setData }) {
     const extra = Math.max(0, form.custoExtra || 0);
     const extraNome = (form.custoExtraNome || "").trim();
     const receitaLiq = receita - taxa - extra;
-    return { precoUn, custoUn, qtd, receita, custoTotal: custoUn * qtd, taxa, taxaItens, dev, txCom: tx ? tx.com : 0, txFixa: tx ? tx.fixa : 0, extra, extraNome, receitaLiq, lucro: receitaLiq - custoUn * qtd, tier };
+    return { precoUn, precoRegistrado, custoUn, qtd, receita, custoTotal: custoUn * qtd, taxa, taxaItens, dev, txCom: tx ? tx.com : 0, txFixa: tx ? tx.fixa : 0, extra, extraNome, receitaLiq, lucro: receitaLiq - custoUn * qtd, tier };
   }, [prod, form, g, data.itens, edit]);
 
   function salvar() {
@@ -586,11 +582,20 @@ function VendasTab({ data, g, setData }) {
   }
 
   function iniciarEdicao(v) {
+    const p = data.produtos.find((x) => x.id === v.produtoId);
+    let precoReg = null;
+    if (p) {
+      const pr = precosProduto(p, data.itens, g);
+      const tierV = v.canal === "shopee" ? "shopee" : (v.tier === "atacado" && p.vendeAtacado ? "atacado" : "normal");
+      precoReg = v.canal === "shopee" ? pr.shopee.preco : (tierV === "atacado" ? pr.atacado : pr.normal);
+    }
+    const difere = precoReg == null || Math.abs((v.precoUnit || 0) - precoReg) > 0.005;
     setEdit(v);
     setForm({
       produtoId: v.produtoId, canal: v.canal,
       tier: v.tier === "atacado" ? "atacado" : "normal",
       qtd: v.qtd, tema: v.tema || "", custoExtraNome: v.custoExtraNome || "", custoExtra: v.custoExtra || 0,
+      precoManual: difere, precoCustom: v.precoUnit || 0,
       hoje: false, data: toYMD(new Date(v.data)), obs: v.obs || "",
     });
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -685,6 +690,18 @@ function VendasTab({ data, g, setData }) {
               <label className="block"><span className="text-[11px] text-stone-400">Preço</span><div className="mt-1"><Seg options={[{ v: "normal", label: "Normal" }, { v: "atacado", label: "Atacado" }]} value={form.tier} onChange={(v) => setForm((f) => ({ ...f, tier: v }))} /></div></label>
             )}
             <label className="block">
+              <span className="text-[11px] text-stone-400">Preço de venda</span>
+              <div className="mt-1"><Seg options={[{ v: "reg", label: "Registrado" }, { v: "custom", label: "Personalizado" }]} value={form.precoManual ? "custom" : "reg"} onChange={(v) => setForm((f) => ({ ...f, precoManual: v === "custom", precoCustom: v === "custom" && !(f.precoCustom > 0) ? Math.round((preview?.precoRegistrado || 0) * 100) / 100 : f.precoCustom }))} /></div>
+              {form.precoManual ? (
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <In value={form.precoCustom || ""} prefix="R$" placeholder="0,00" onChange={(e) => setForm((f) => ({ ...f, precoCustom: num(e) }))} w="max-w-[140px]" />
+                  <span className="text-[10px] text-stone-500">registrado: <Mono className="text-stone-400">{brl(preview?.precoRegistrado || 0)}</Mono></span>
+                </div>
+              ) : (
+                <p className="text-[10px] text-stone-500 mt-1">Usando o preço da aba Produtos: <Mono className="text-stone-300">{brl(preview?.precoRegistrado || 0)}</Mono></p>
+              )}
+            </label>
+            <label className="block">
               <span className="text-[11px] text-stone-400">Data da venda</span>
               <div className="mt-1 flex items-center gap-3 flex-wrap">
                 <label className="flex items-center gap-1.5 text-sm text-stone-300 cursor-pointer select-none">
@@ -713,7 +730,7 @@ function VendasTab({ data, g, setData }) {
 
             {preview && (
               <div className="bg-black/20 rounded-xl p-3 grid grid-cols-2 gap-y-1.5 gap-x-3 text-xs">
-                {(preview.taxa > 0 || preview.qtd > 1 || preview.extra > 0) && (<>
+                {(preview.taxa > 0 || preview.qtd > 1 || preview.extra > 0 || form.precoManual) && (<>
                   <div className="text-stone-400">Preço unitário</div><div className="text-right"><Mono className="text-stone-100">{brl(preview.precoUn)}</Mono></div>
                 </>)}
                 {preview.qtd > 1 && (<>
